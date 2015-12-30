@@ -116,7 +116,7 @@ for a in activities_generator:
     # will have been written to disk about this activity, so just running it again
     # should pick up where it left off.
     print '\tDownloading file...'
-    data = garmin_handler.getFileByID( a['activityId'], args.format )
+    data = garmin_handler.getFileDataByID( a['activityId'], args.format )
     
     if args.format == 'original':
         data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], 'zip')

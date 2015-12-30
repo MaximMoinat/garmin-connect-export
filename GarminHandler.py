@@ -121,22 +121,24 @@ class GarminHandler( object ):
             else:
                 start_index += max_chunk_size #Forwards
         
-    def getNewRuns( self, existing_ids ):
-        """ Iterate until an existing activiity is found. 
-            Returns list of new activities. """
+    def getNewActivities( self, existing_ids, act_category = None ):
+        """ Iterate until an existing activity is found.
+            *existing_ids* - list of integer activity ids
+            *act_category* - ['running','cycling','swimming','hiking',...]
+            Returns a generator of ActivityJSON objects with new activities. """
         
         activities = self.activitiesGenerator()
         for activity_dict in activities:
-            act = ActivityJSON( activity_dict )
+            activity = ActivityJSON( activity_dict )
             
-            act_id = act.getID()
+            act_id = activity.getID()
             if act_id in existing_ids:
                 break
             
-            if act.isRun():
-                yield activity_dict
+            if activity.getCategory() == act_category or act_category == None:
+                yield activity
                 
-    def getFileByID( self, activity_id, fileformat = 'tcx' ):
+    def getFileDataByID( self, activity_id, fileformat = 'tcx' ):
         """ Downloads and returns data of given activity """
         
         if fileformat == 'tcx':

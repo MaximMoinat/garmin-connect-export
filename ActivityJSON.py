@@ -3,6 +3,7 @@
 Created on Sun Oct 25 09:48:32 2015
 
 @author: Maxim
+TODO (30-12-2015): Add error handling if json_dict is not in the correct format.
 """
 from datetime import datetime
 import re
@@ -18,7 +19,8 @@ class ActivityJSON(object):
         self.json_dict = json_dict
 
     def getID( self ):
-        return self.json_dict['activityId']
+        # 30-12-2015 return an integer
+        return int( self.json_dict['activityId'] )
 
     def getName( self ):
         return self.json_dict['activityName']['value']
