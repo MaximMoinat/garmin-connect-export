@@ -9,6 +9,7 @@ Description:	Use this script to export your fitness data from Garmin Connect.
 				See README.md for more information.
 """
 
+import re
 from urllib import urlencode
 from datetime import datetime
 from getpass import getpass
@@ -43,8 +44,8 @@ parser.add_argument('--password', help="your Garmin Connect password (otherwise,
 parser.add_argument('-c', '--count', nargs='?', default="1",
 	help="number of recent activities to download, or 'all' (default: 1)")
 
-parser.add_argument('-f', '--format', nargs='?', choices=['gpx', 'tcx', 'original'], default="gpx",
-	help="export format; can be 'gpx', 'tcx', or 'original' (default: 'gpx')")
+parser.add_argument('-f', '--format', nargs='?', choices=['gpx', 'tcx', 'original', 'none'], default="gpx",
+	help="export format; can be 'gpx', 'tcx', or 'original' (default: 'gpx'). Or 'none' if no file should be saved for each file")
 
 parser.add_argument('-d', '--directory', nargs='?', default=activities_directory,
 	help="the directory to export to (default: './YYYY-MM-DD_garmin_connect_export')")
@@ -115,27 +116,28 @@ for a in activities_generator:
     # If the download fails (e.g., due to timeout), this script will die, but nothing
     # will have been written to disk about this activity, so just running it again
     # should pick up where it left off.
-    print '\tDownloading file...'
-    data = garmin_handler.getFileDataByID( a['activityId'], args.format )
-    
-    if args.format == 'original':
-        data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], 'zip')
-        fit_filename = args.directory + '/' + a['activityId'] + '.fit'
-        file_mode = 'wb'
-    else:
-        data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], args.format)
-        file_mode = 'w'
+    if args.format != 'none': # 17-02-2016: able to skip downloading file
+        print '\tDownloading file...'
+        data = garmin_handler.getFileDataByID( a['activityId'], args.format )
+        
+        if args.format == 'original':
+            data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], 'zip')
+            fit_filename = args.directory + '/' + a['activityId'] + '.fit'
+            file_mode = 'wb'
+        else:
+            data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], args.format)
+            file_mode = 'w'
 
-    if isfile(data_filename):
-        print '\tData file already exists; skipping...'
-        continue
-    if args.format == 'original' and isfile(fit_filename):  # Regardless of unzip setting, don't redownload if the ZIP or FIT file exists.
-        print '\tFIT data file already exists; skipping...'
-        continue
+        if isfile(data_filename):
+            print '\tData file already exists; skipping...'
+            continue
+        if args.format == 'original' and isfile(fit_filename):  # Regardless of unzip setting, don't redownload if the ZIP or FIT file exists.
+            print '\tFIT data file already exists; skipping...'
+            continue
 
-    save_file = open(data_filename, file_mode)
-    save_file.write(data)
-    save_file.close()
+        save_file = open(data_filename, file_mode)
+        save_file.write(data)
+        save_file.close()
 
     # Write stats to CSV.
     
@@ -177,12 +179,15 @@ for a in activities_generator:
     csv_record += empty_record if 'sumDistance' not in a else '"' + a['sumDistance']['withUnit'].replace('"', '""') + '",'
     csv_record += empty_record if 'sumDistance' not in a else '"' + a['sumDistance']['value'].replace('"', '""') + '",'
     csv_record += empty_record if 'minHeartRate' not in a else '"' + a['minHeartRate']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'maxElevation' not in a else '"' + a['maxElevation']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'maxElevation' not in a else '"' + a['maxElevation']['value'].replace('"', '""') + '",'
+    csv_record += empty_record if 'minElevation' not in a else '"' + a['minElevation']['withUnit'].replace('"', '""') + '",'
+    csv_record += empty_record if 'minElevation' not in a else '"' + a['minElevation']['value'].replace('"', '""') + '",'
     csv_record += empty_record if 'gainElevation' not in a else '"' + a['gainElevation']['withUnit'].replace('"', '""') + '",'
     csv_record += empty_record if 'gainElevation' not in a else '"' + a['gainElevation']['value'].replace('"', '""') + '",'
     csv_record += empty_record if 'lossElevation' not in a else '"' + a['lossElevation']['withUnit'].replace('"', '""') + '",'
     csv_record += empty_record if 'lossElevation' not in a else '"' + a['lossElevation']['value'].replace('"', '""') + '"'
+    
+    csv_record = csv_record.strip(',') #Remove trailing comma, introduced by final empty_record (if 'lossElevation' not present)
+    csv_record = re.sub(r'\s+',' ',csv_record) # Replace all whitespace by a single ' '. Especially for comments with enters.
     csv_record += '\n'
 
     csv_file.write(csv_record.encode('utf8'))
