@@ -6,67 +6,91 @@ Created on Fri Oct 23 20:14:46 2015
 @author: Maxim
 """
 from urllib import urlencode #somehow not in the urllib2 package
-import urllib2, cookielib, json
+import urllib2, cookielib, json, re
 from ActivityJSON import ActivityJSON
 
 class GarminHandler( object ):
     ## Global Constants
     # URLs for various services.
-    URL_LOGIN     = 'https://sso.garmin.com/sso/login?service=https%3A%2F%2Fconnect.garmin.com%2Fpost-auth%2Flogin&webhost=olaxpw-connect04&source=https%3A%2F%2Fconnect.garmin.com%2Fen-US%2Fsignin&redirectAfterAccountLoginUrl=https%3A%2F%2Fconnect.garmin.com%2Fpost-auth%2Flogin&redirectAfterAccountCreationUrl=https%3A%2F%2Fconnect.garmin.com%2Fpost-auth%2Flogin&gauthHost=https%3A%2F%2Fsso.garmin.com%2Fsso&locale=en_US&id=gauth-widget&cssUrl=https%3A%2F%2Fstatic.garmincdn.com%2Fcom.garmin.connect%2Fui%2Fcss%2Fgauth-custom-v1.1-min.css&clientId=GarminConnect&rememberMeShown=true&rememberMeChecked=false&createAccountShown=true&openCreateAccount=false&usernameShown=false&displayNameShown=false&consumeServiceTicket=false&initialFocus=true&embedWidget=false&generateExtraServiceTicket=false'
-    URL_POST_AUTH = 'https://connect.garmin.com/post-auth/login?'
-    URL_SEARCH    = 'http://connect.garmin.com/proxy/activity-search-service-1.0/json/activities?'
-    URL_GPX_ACTIVITY = 'http://connect.garmin.com/proxy/activity-service-1.1/gpx/activity/%s?full=true'
-    URL_TCX_ACTIVITY = 'http://connect.garmin.com/proxy/activity-service-1.1/tcx/activity/%s?full=true'
-    URL_ZIP_ACTIVITY = 'http://connect.garmin.com/proxy/download-service/files/activity/%s'
-    URL_CSV_ACTIVITY = 'http://connect.garmin.com/csvExporter/%s.csv'
-    JSON_DOWNLOAD_LIMIT = 100 # Maximum number of activities to request at once. 100 is the maximum set and enforced by Garmin. 
-    #JSON_DOWNLOAD_LIMIT = 10 # but 10 is faster if few activities to retrieve.
-    
-    def __init__( self, username, password ):
+    URL_LOGIN      = 'https://sso.garmin.com/sso/login?service=https%3A%2F%2Fconnect.garmin.com%2Fpost-auth%2Flogin&webhost=olaxpw-connect04&source=https%3A%2F%2Fconnect.garmin.com%2Fen-US%2Fsignin&redirectAfterAccountLoginUrl=https%3A%2F%2Fconnect.garmin.com%2Fpost-auth%2Flogin&redirectAfterAccountCreationUrl=https%3A%2F%2Fconnect.garmin.com%2Fpost-auth%2Flogin&gauthHost=https%3A%2F%2Fsso.garmin.com%2Fsso&locale=en_US&id=gauth-widget&cssUrl=https%3A%2F%2Fstatic.garmincdn.com%2Fcom.garmin.connect%2Fui%2Fcss%2Fgauth-custom-v1.1-min.css&clientId=GarminConnect&rememberMeShown=true&rememberMeChecked=false&createAccountShown=true&openCreateAccount=false&usernameShown=false&displayNameShown=false&consumeServiceTicket=false&initialFocus=true&embedWidget=false&generateExtraServiceTicket=false'
+    URL_POST_AUTH  = 'https://connect.garmin.com/post-auth/login?'
+    URL_POST_AUTH2 = 'http://connect.garmin.com/modern'
+    URL_POST_AUTH3 = 'https://connect.garmin.com/legacy/session'
+
+    # Documentation API:
+    # https://connect.garmin.com/proxy/activity-search-service-1.2/
+    # https://connect.garmin.com/proxy/activity-service-1.3/
+    URL_SEARCH    = 'http://connect.garmin.com/proxy/activity-search-service-1.2/json/activities?'
+    URL_GPX_ACTIVITY = 'https://connect.garmin.com/modern/proxy/download-service/export/gpx/activity/%s'
+    URL_TCX_ACTIVITY = 'https://connect.garmin.com/modern/proxy/download-service/export/tcx/activity/%s'
+    URL_CSV_ACTIVITY = 'https://connect.garmin.com/modern/proxy/download-service/export/csv/activity/%s'
+    URL_ZIP_ACTIVITY = 'https://connect.garmin.com/modern/proxy/download-service/files/activity/%s'
+
+    # Maximum number of activities to request at once. 100 is the maximum set and enforced by Garmin
+    JSON_DOWNLOAD_LIMIT = 100 # 10 is faster if few activities to retrieve.
+
+    def __init__( self ):
         self.opener = None
-        # You must be logged in to use the class 
-        self.login( username, password )
-        
+        self.logged_in = False
+
     def login( self, username, password ):
         """ Returns True if logged in, raises error if not."""
         # Initially, we need to get a valid session cookie, so we pull the login page.
         cookie_jar = cookielib.CookieJar()
         self.opener = urllib2.build_opener( urllib2.HTTPCookieProcessor(cookie_jar) )
         http_req( self.opener, self.URL_LOGIN )
-        
+
         # Now we'll actually login. Post data with Fields that are passed in a typical Garmin login.
-        post_data = {'username': username, 'password': password, 
-                     'embed': 'true', 'lt': 'e1s1', '_eventId': 'submit', 'displayNameRequired': 'false'} 
+        post_data = {'username': username, 'password': password,
+                     'embed': 'true', 'lt': 'e1s1', '_eventId': 'submit', 'displayNameRequired': 'false'}
         http_req ( self.opener, self.URL_LOGIN, post_data )
-        
+
         # Get the key.
-        # TODO: Can we do this without iterating?
-        login_ticket = None
-        for cookie in cookie_jar:
-            if cookie.name == 'CASTGC':
-                login_ticket = cookie.value
-                break
-        
-        if not login_ticket:
+        try:
+            login_ticket = filter(lambda x: x.name == 'CASTGC', cookie_jar)[0].value
+        except:
             raise Exception('Did not get a ticket cookie. Cannot log in. Did you enter the correct username and password?')
-        
+
+        # Post Authorize.
+        login_response = self._postAuthorize( login_ticket )
+
+        # Extra check that account name can be retrieved
+        account_name = self._getAccountName(login_response)
+        if not account_name:
+            print ('Not logged in, post-authorization probably went wrong.')
+            return False
+
+        print( 'Logged in to account of %s' % account_name )
+        self.logged_in = True
+
+    def _postAuthorize( self, login_ticket ):
         # Post Authorize. Chop of 'TGT-' off the beginning, prepend 'ST-0'.
         login_ticket = 'ST-0' + login_ticket[4:]
-        http_req( self.opener, self.URL_POST_AUTH + 'ticket=' + login_ticket)
-        
-        #TODO: extra check whether indeed logged in.
-        return True  
-        
+        login_response = http_req( self.opener, self.URL_POST_AUTH + 'ticket=' + login_ticket )
+        # Additional post-authorization 02-11-2016
+        http_req( self.opener, self.URL_POST_AUTH2 )
+        http_req( self.opener, self.URL_POST_AUTH3 )
+        return login_response
+
+    def _getAccountName( self, post_login_response ):
+        res = re.search(r'fullName.+?:(.+?),', post_login_response)
+        if not res:
+            return False
+        return res.group(1).strip( '\\"' )
+
     def activitiesGenerator( self, limit = None, reversed = False ):
-        """ Yields the json as dict for every activity found, 
+        """ Yields the json as dict for every activity found,
             either from new to old or reversed. """
-        
+
+        if not self.logged_in:
+            raise Exception('Please login first with .login(<username>,<password>)')
+
         # Prevent downloading too large chunks (saves time)
         if limit and limit < self.JSON_DOWNLOAD_LIMIT:
             max_chunk_size = limit
         else:
             max_chunk_size = self.JSON_DOWNLOAD_LIMIT
-        
+
         # Determine index to start at
         if reversed:
             # Download one activity. Result will contain how many activities
@@ -81,7 +105,7 @@ class GarminHandler( object ):
                 start_index = 0
         else:
             start_index = 0
-        
+
         # Download data in multiple chunks of *max_chunk_size* activities
         total_downloaded = 0
         downloaded_chunk_size = max_chunk_size #initialize
@@ -89,28 +113,29 @@ class GarminHandler( object ):
             # Query Garmin Connect
             search_params = {'start': start_index, 'limit': max_chunk_size}
             url = self.URL_SEARCH + urlencode(search_params)
+
             try:
                 result = http_req(self.opener, url )
                 json_results = json.loads(result)
             except urllib2.HTTPError as e:
                 raise Exception('Failed to retrieve json of activities. (' + str(e) + ').')
-            
+
             # Pull out just the list of activities.
             activities = json_results['results']['activities']
             downloaded_chunk_size = len(activities)
-            
+
             if reversed:
                 activities = activities[::-1] #reverse
-                
+
             for activity in activities:
                 activity_details = activity['activity']
                 yield activity_details
-                
-                total_downloaded += 1                
+
+                total_downloaded += 1
                 # Stop if limit is reached
                 if total_downloaded == limit:
                     raise StopIteration
-            
+
             # Increment start index
             if reversed:
                 if start_index - max_chunk_size < 0: # Negative start is not allowed
@@ -120,7 +145,7 @@ class GarminHandler( object ):
                     start_index -= max_chunk_size #Backwards
             else:
                 start_index += max_chunk_size #Forwards
-        
+
     def getNewActivities( self, existing_ids, act_category = None ):
         """ Iterate until an existing activity is found.
             *existing_ids* - list of integer activity ids
@@ -137,25 +162,30 @@ class GarminHandler( object ):
             
             if activity.getCategory() == act_category or act_category == None:
                 yield activity
-                
+
+    def getNewRuns( self, existing_ids ):
+        """ Iterate until an existing activity is found.
+            Returns list of new activities. """
+        self.getNewActivities(existing_ids, 'running')
+        
     def getFileDataByID( self, activity_id, fileformat = 'tcx' ):
         """ Downloads and returns data of given activity """
-        
+
         if fileformat == 'tcx':
             download_url = self.URL_TCX_ACTIVITY % activity_id
-            
+
         elif fileformat == 'gpx':
             download_url = self.URL_GPX_ACTIVITY % activity_id
-            
+
         elif fileformat == 'original':
             download_url = self.URL_ZIP_ACTIVITY % activity_id
-            
+
         elif fileformat == 'csv': #lap data
             download_url = self.URL_CSV_ACTIVITY % activity_id
-            
+
         else:
             raise Exception('Unrecognized download file format. Supported: tcx,gpx,original and csv')
-        
+
         # Download
         try:
             data = http_req( self.opener, download_url )
@@ -173,8 +203,8 @@ class GarminHandler( object ):
                 data = ''
             else:
                 raise Exception('Failed. Got an unexpected HTTP error (' + str(e.code) + ').')
-                
-        return data   
+
+        return data
 
 ## End of Class ##
 
@@ -193,4 +223,4 @@ def http_req(opener, url, post=None, headers={}):
     if response.getcode() != 200:
         raise Exception('Bad return code (' + response.getcode() + ') for: ' + url)
 
-    return response.read()   
+    return response.read()
