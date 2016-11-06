@@ -36,13 +36,17 @@ class GarminActivity(object):
             return False
     
     def getDistance( self ):
+        """ Distance in km """ 
         parent = self.json_summary['SumDistance']
         
         unit = parent['uom']
-        if unit != 'kilometer':
+        distance = float( parent['value'] )
+        if unit == 'kilometer':
+            return distance
+        elif unit == 'mile':
+            return distance * 1.609344
+        else:
             raise Exception("Distance has the wrong unit: '%s'" % unit)
-        
-        return float( parent['value'] )
     
     def getDuration( self ):
         parent = self.json_summary['SumDuration'] 
@@ -63,6 +67,14 @@ class GarminActivity(object):
             Note: this is in the GMT timezone !!!"""
         # First ten characters of timestamp
         date_yyyymmdd = self.json_summary['BeginTimestamp']['value']
+        date = datetime.strptime(date_yyyymmdd,"%Y-%m-%dT%H:%M:%S.%fZ")
+        return date       
+        
+    def getEndDate( self ):
+        """ Returns datetime object
+            Note: this is in the GMT timezone !!!"""
+        # First ten characters of timestamp
+        date_yyyymmdd = self.json_summary['EndTimestamp']['value']
         date = datetime.strptime(date_yyyymmdd,"%Y-%m-%dT%H:%M:%S.%fZ")
         return date
         

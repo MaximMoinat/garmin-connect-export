@@ -27,7 +27,6 @@ import argparse
 import zipfile
 
 from GarminHandler import GarminHandler
-from ActivityJSON import ActivityJSON
 
 script_version = '1.0.0'
 current_date = datetime.now().strftime('%Y-%m-%d')
@@ -44,8 +43,8 @@ parser.add_argument('--password', help="your Garmin Connect password (otherwise,
 parser.add_argument('-c', '--count', nargs='?', default="1",
 	help="number of recent activities to download, or 'all' (default: 1)")
 
-parser.add_argument('-f', '--format', nargs='?', choices=['gpx', 'tcx', 'original', 'none'], default="gpx",
-	help="export format; can be 'gpx', 'tcx', or 'original' (default: 'gpx'). Or 'none' if no file should be saved for each file")
+parser.add_argument('-f', '--format', nargs='?', choices=['gpx', 'tcx', 'csv', 'original', 'none'], default="gpx",
+	help="export format; can be 'gpx', 'tcx', 'csv', or 'original' (default: 'gpx'). Or 'none' if no file should be saved for each file")
 
 parser.add_argument('-d', '--directory', nargs='?', default=activities_directory,
 	help="the directory to export to (default: './YYYY-MM-DD_garmin_connect_export')")
@@ -80,7 +79,8 @@ username = args.username if args.username else raw_input('Username: ')
 password = args.password if args.password else getpass()
 
 # Login and initialize the handler. Raises exception if login failed.
-garmin_handler = GarminHandler( username, password )
+garmin_handler = GarminHandler()
+garmin_handler.login( username, password )
 
 if not isdir(args.directory):
 	mkdir(args.directory)
@@ -92,25 +92,16 @@ csv_file = open(csv_filename, 'a')
 
 # Write header to CSV file
 if not csv_existed:
-	csv_file.write('Activity ID,Activity Name,Description,Begin Timestamp,Begin Timestamp (Raw Milliseconds),End Timestamp,End Timestamp (Raw Milliseconds),Device,Activity Parent,Activity Type,Event Type,Activity Time Zone,Max. Elevation,Max. Elevation (Raw),Begin Latitude (Decimal Degrees Raw),Begin Longitude (Decimal Degrees Raw),End Latitude (Decimal Degrees Raw),End Longitude (Decimal Degrees Raw),Average Moving Speed,Average Moving Speed (Raw),Max. Heart Rate (bpm),Average Heart Rate (bpm),Max. Speed,Max. Speed (Raw),Calories,Calories (Raw),Duration (h:m:s),Duration (Raw Seconds),Moving Duration (h:m:s),Moving Duration (Raw Seconds),Average Speed,Average Speed (Raw),Distance,Distance (Raw),Max. Heart Rate (bpm),Min. Elevation,Min. Elevation (Raw),Elevation Gain,Elevation Gain (Raw),Elevation Loss,Elevation Loss (Raw)\n')
+	csv_file.write('Activity ID,Activity Name,Description,Begin Timestamp,End Timestamp,Activity Type,Distance (km),Duration (s),Max. Heart Rate (bpm),Avg. Heart Rate (bpm),Begin Latitude (Decimal Degrees Raw),Begin Longitude (Decimal Degrees Raw)\n')
 
 # Create generator for activities. Generates activities until specified number of activities are retrieved.
 # Activity is a dictionary object of the json. (without the redundant first 'activity' key)
-activities_generator = garmin_handler.activitiesGenerator( limit = total_to_download, reversed = args.reverse )
+activities_generator = garmin_handler.getActivities( limit = total_to_download, reversed = args.reverse )
 
-for a in activities_generator:
+for activity in activities_generator:
     # Display which entry we're working on.
-    print 'Garmin Connect activity: [' + a['activityId'] + ']',
-    print a['activityName']['value']
-    print '\t' + a['beginTimestamp']['display'] + ',',
-    if 'sumElapsedDuration' in a:
-        print a['sumElapsedDuration']['display'] + ',',
-    else:
-        print '??:??:??,',
-    if 'sumDistance' in a:
-        print a['sumDistance']['withUnit']
-    else:
-        print '0.00 Miles'
+    print 'Garmin Connect activity: [%d] %s' % ( activity.getID(), activity.getName() ),
+    print '\t %s, %d, %d km' % ( activity.getDate(), activity.getDuration(), activity.getDistance() )
     
     # Download the data file from Garmin Connect.
     # If the download fails (e.g., due to timeout), this script will die, but nothing
@@ -118,14 +109,14 @@ for a in activities_generator:
     # should pick up where it left off.
     if args.format != 'none': # 17-02-2016: able to skip downloading file
         print '\tDownloading file...'
-        data = garmin_handler.getFileDataByID( a['activityId'], args.format )
+        data = garmin_handler.getFileDataByID( activity.getID(), args.format )
         
         if args.format == 'original':
-            data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], 'zip')
-            fit_filename = args.directory + '/' + a['activityId'] + '.fit'
+            data_filename = "%s/activity_%s.%s" % (args.directory, activity.getID(), 'zip')
+            fit_filename = args.directory + '/' + activity.getID() + '.fit'
             file_mode = 'wb'
         else:
-            data_filename = "%s/activity_%s.%s" % (args.directory, a['activityId'], args.format)
+            data_filename = "%s/activity_%s.%s" % (args.directory, activity.getID(), args.format)
             file_mode = 'w'
 
         if isfile(data_filename):
@@ -139,79 +130,25 @@ for a in activities_generator:
         save_file.write(data)
         save_file.close()
 
-    # Write stats to CSV.
-    
-    empty_record = '"",'
-
-    csv_record = ''
-    csv_record += empty_record if 'activityId' not in a else '"' + a['activityId'].replace('"', '""') + '",'
-    csv_record += empty_record if 'activityName' not in a else '"' + a['activityName']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'activityDescription' not in a else '"' + a['activityDescription']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'beginTimestamp' not in a else '"' + a['beginTimestamp']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'beginTimestamp' not in a else '"' + a['beginTimestamp']['millis'].replace('"', '""') + '",'
-    csv_record += empty_record if 'endTimestamp' not in a else '"' + a['endTimestamp']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'endTimestamp' not in a else '"' + a['endTimestamp']['millis'].replace('"', '""') + '",'
-    csv_record += empty_record if 'device' not in a else '"' + a['device']['display'].replace('"', '""') + ' ' + a['device']['version'].replace('"', '""') + '",'
-    csv_record += empty_record if 'activityType' not in a else '"' + a['activityType']['parent']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'activityType' not in a else '"' + a['activityType']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'eventType' not in a else '"' + a['eventType']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'activityTimeZone' not in a else '"' + a['activityTimeZone']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'maxElevation' not in a else '"' + a['maxElevation']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'maxElevation' not in a else '"' + a['maxElevation']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'beginLatitude' not in a else '"' + a['beginLatitude']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'beginLongitude' not in a else '"' + a['beginLongitude']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'endLatitude' not in a else '"' + a['endLatitude']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'endLongitude' not in a else '"' + a['endLongitude']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'weightedMeanMovingSpeed' not in a else '"' + a['weightedMeanMovingSpeed']['display'].replace('"', '""') + '",'  # The units vary between Minutes per Mile and mph, but withUnit always displays "Minutes per Mile"
-    csv_record += empty_record if 'weightedMeanMovingSpeed' not in a else '"' + a['weightedMeanMovingSpeed']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'maxHeartRate' not in a else '"' + a['maxHeartRate']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'weightedMeanHeartRate' not in a else '"' + a['weightedMeanHeartRate']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'maxSpeed' not in a else '"' + a['maxSpeed']['display'].replace('"', '""') + '",'  # The units vary between Minutes per Mile and mph, but withUnit always displays "Minutes per Mile"
-    csv_record += empty_record if 'maxSpeed' not in a else '"' + a['maxSpeed']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumEnergy' not in a else '"' + a['sumEnergy']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumEnergy' not in a else '"' + a['sumEnergy']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumElapsedDuration' not in a else '"' + a['sumElapsedDuration']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumElapsedDuration' not in a else '"' + a['sumElapsedDuration']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumMovingDuration' not in a else '"' + a['sumMovingDuration']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumMovingDuration' not in a else '"' + a['sumMovingDuration']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'weightedMeanSpeed' not in a else '"' + a['weightedMeanSpeed']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'weightedMeanSpeed' not in a else '"' + a['weightedMeanSpeed']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumDistance' not in a else '"' + a['sumDistance']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'sumDistance' not in a else '"' + a['sumDistance']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'minHeartRate' not in a else '"' + a['minHeartRate']['display'].replace('"', '""') + '",'
-    csv_record += empty_record if 'minElevation' not in a else '"' + a['minElevation']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'minElevation' not in a else '"' + a['minElevation']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'gainElevation' not in a else '"' + a['gainElevation']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'gainElevation' not in a else '"' + a['gainElevation']['value'].replace('"', '""') + '",'
-    csv_record += empty_record if 'lossElevation' not in a else '"' + a['lossElevation']['withUnit'].replace('"', '""') + '",'
-    csv_record += empty_record if 'lossElevation' not in a else '"' + a['lossElevation']['value'].replace('"', '""') + '"'
-    
-    csv_record = csv_record.strip(',') #Remove trailing comma, introduced by final empty_record (if 'lossElevation' not present)
-    csv_record = re.sub(r'\s+',' ',csv_record) # Replace all whitespace by a single ' '. Especially for comments with enters.
-    csv_record += '\n'
+    # Write stats to CSV.    
+    csv_record = "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % (
+            activity.getID(),
+            activity.getName(),
+            activity.getComment(),
+            activity.getDate(), #datetime object
+            activity.getEndDate(),
+            activity.getCategory(),
+            activity.getDistance(),
+            activity.getDuration(),
+            activity.getBpmMax(),
+            activity.getBpmAvg(),
+            activity.getLatitude(),
+            activity.getLongitude()
+        )
 
     csv_file.write(csv_record.encode('utf8'))
     
-    # TODO MM replace csv creation thing by:
-    # activity_obj = ActivityJSON( activity_dict )
-    # csv_record = "%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s;%s" % (
-            # activity_obj.getID(),
-            # activity_obj.getName(),
-            # activity_obj.getCategory(),
-            # activity_obj.getDistance(),
-            # activity_obj.getDuration(),
-            # activity_obj.getComment(),
-            # activity_obj.getDate(), #datetime object
-            # activity_obj.getStartTime(),
-            # activity_obj.getBpmMax(),
-            # activity_obj.getBpmAvg(),
-            # activity_obj.getLatitude(),
-            # activity_obj.getLongitude()
-        # )
-    
-    # TODO MM file validation?
-
-    # Validate data. 24-12-2015: is this needed?
+    # Validate data. 
     if args.format == 'gpx':
         # Validate GPX data. If we have an activity without GPS data (e.g., running on a treadmill),
         # Garmin Connect still kicks out a GPX, but there is only activity information, no GPS data.

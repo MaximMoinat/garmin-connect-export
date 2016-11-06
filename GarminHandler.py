@@ -78,7 +78,7 @@ class GarminHandler( object ):
             return False
         return res.group(1).strip( '\\"' )
 
-    def activitiesGenerator( self, limit = None, reversed = False ):
+    def getActivities( self, limit = None, reversed = False ):
         """ Yields the json as dict for every activity found,
             either from new to old or reversed. """
 
@@ -97,7 +97,7 @@ class GarminHandler( object ):
             url = self.URL_SEARCH + urlencode({'start': 0, 'limit': 1})
             result = http_req(self.opener, url )
             json_results = json.loads(result)
-            n_activities = int( json_results['results']['search']['totalFound'])
+            n_activities = int( json_results['results']['totalFound'])
             # Start
             start_index = n_activities - max_chunk_size
             if start_index < 0: #Negative index gives problems
@@ -128,7 +128,7 @@ class GarminHandler( object ):
 
             for activity in activities:
                 activity_details = activity['activity']
-                yield activity_details
+                yield GarminActivity(activity_details)
 
                 total_downloaded += 1
                 # Stop if limit is reached
@@ -151,10 +151,8 @@ class GarminHandler( object ):
             *act_category* - ['running','cycling','swimming','hiking',...]
             Returns a generator of GarminActivity objects with new activities. """
         
-        activities = self.activitiesGenerator()
-        for activity_dict in activities:
-            activity = GarminActivity( activity_dict )
-            
+        activities = self.getActivities()
+        for activity in activities:
             act_id = activity.getID()
             if act_id in existing_ids:
                 break
@@ -170,27 +168,28 @@ class GarminHandler( object ):
         
     def getFileDataByID( self, activity_id, fileformat = 'tcx' ):
         """ Downloads and returns data of given activity """
-
+        
         if fileformat == 'tcx':
             download_url = self.URL_TCX_ACTIVITY % activity_id
-            MIN_FILE_LENGTH = 2000 # Xml without content is 900-1000 characters
+            MIN_FILE_LENGTH = 1100 # Xml without content is 900-1000 characters
 
         elif fileformat == 'gpx':
             download_url = self.URL_GPX_ACTIVITY % activity_id
-            MIN_FILE_LENGTH = 2000 # Xml without content is 600-700 characters
+            MIN_FILE_LENGTH = 1000 # Xml without content is 600-700 characters
 
         elif fileformat == 'original':
             download_url = self.URL_ZIP_ACTIVITY % activity_id
-            MIN_FILE_LENGTH = 1000
+            MIN_FILE_LENGTH = 500
 
         elif fileformat == 'csv': #lap data
             download_url = self.URL_CSV_ACTIVITY % activity_id
-            MIN_FILE_LENGTH = 500 # Just heading and summary is 200-300 characters
+            MIN_FILE_LENGTH = 300 # Just heading and summary is 200-300 characters
 
         else:
             raise Exception('Unrecognized download file format. Supported: tcx,gpx,original and csv')
 
         # Download until file retrieved
+        # Update: iteration seems not needed anymore, Garmin fixed it (6-11-2016)
         tries_max = 40
         tries = 0
         result = ''
