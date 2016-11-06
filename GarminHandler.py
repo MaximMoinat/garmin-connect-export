@@ -173,43 +173,66 @@ class GarminHandler( object ):
 
         if fileformat == 'tcx':
             download_url = self.URL_TCX_ACTIVITY % activity_id
+            MIN_FILE_LENGTH = 2000 # Xml without content is 900-1000 characters
 
         elif fileformat == 'gpx':
             download_url = self.URL_GPX_ACTIVITY % activity_id
+            MIN_FILE_LENGTH = 2000 # Xml without content is 600-700 characters
 
         elif fileformat == 'original':
             download_url = self.URL_ZIP_ACTIVITY % activity_id
+            MIN_FILE_LENGTH = 1000
 
         elif fileformat == 'csv': #lap data
             download_url = self.URL_CSV_ACTIVITY % activity_id
+            MIN_FILE_LENGTH = 500 # Just heading and summary is 200-300 characters
 
         else:
             raise Exception('Unrecognized download file format. Supported: tcx,gpx,original and csv')
 
-        # Download
-        try:
-            data = http_req( self.opener, download_url )
-        except urllib2.HTTPError as e:
-            # Handle expected (though unfortunate) error codes; die on unexpected ones.
-            if e.code == 500:
-                # Garmin will give an internal server error (HTTP 500) when downloading TCX files if the original was a manual GPX upload.
-                # One could be generated here, but that's a bit much. Use the GPX format if you want actual data in every file, as I believe Garmin provides a GPX file for every activity.
-                print 'Returning empty file since Garmin did not generate a TCX file for this activity...'
-                data = ''
-            elif e.code == 404:
-                # For manual activities (i.e., entered in online without a file upload), there is no original file.
-                # Write an empty file to prevent redownloading it.
-                print 'Returning empty file since there was no original activity data...',
-                data = ''
+        # Download until file retrieved
+        tries_max = 40
+        tries = 0
+        result = ''
+        while( tries < tries_max):
+            tries += 1
+            try:
+                response = http_req( self.opener, download_url, return_response = True )
+                result = response.read()
+                # str(activity_id) in response.headers['content-disposition']
+                if len(result) >= MIN_FILE_LENGTH:
+                    print response.headers['content-disposition']
+                    self.spam = response
+                else:                    
+                    print "Try %d, datafile without activity retrieved: '%s', %d characters" % ( tries, response.headers['content-disposition'], len(result) )
+                    result = ''
+                    continue              
+                      
+            except urllib2.HTTPError as e:
+                # Handle expected (though unfortunate) error codes; die on unexpected ones.
+                if e.code == 500:
+                    # Garmin will give an internal server error (HTTP 500) when downloading TCX files if the original was a manual GPX upload.
+                    # One could be generated here, but that's a bit much. Use the GPX format if you want actual data in every file, as I believe Garmin provides a GPX file for every activity.
+                    print "Try %d, error code 500" % tries
+                    # print 'Returning empty file since Garmin did not generate a TCX file for this activity...'
+                elif e.code == 404:
+                    # For manual activities (i.e., entered in online without a file upload), there is no original file.
+                    print "Try %d, error code 404" % tries
+                    # print 'Returning empty file since there was no original activity data...',
+                else:
+                    raise Exception('Failed. Got an unexpected HTTP error (' + str(e.code) + ').')
             else:
-                raise Exception('Failed. Got an unexpected HTTP error (' + str(e.code) + ').')
-
-        return data
+                # Stop if data retrieved
+                break
+        else:
+            print "Exceeded maximum number of tries (%d). Maybe run script again...?" % tries_max
+            
+        return result
 
 ## End of Class ##
 
 ## Tools ##
-def http_req(opener, url, post=None, headers={}):
+def http_req(opener, url, post=None, headers={}, return_response=False):
     """ url is a string, post is a dictionary of POST parameters, headers is a dictionary of headers. """
     request = urllib2.Request(url)
     request.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 5.2; rv:2.0.1) Gecko/20100101 Firefox/4.0.1')  # Tell Garmin we're some supported browser.
@@ -218,9 +241,12 @@ def http_req(opener, url, post=None, headers={}):
     if post:
         post = urlencode(post)  # Convert dictionary to POST parameter string.
     response = opener.open(request, data=post)  # This line may throw a urllib2.HTTPError.
-
+    
     # N.B. urllib2 will follow any 302 redirects. Also, the "open" call above may throw a urllib2.HTTPError which is checked for below.
     if response.getcode() != 200:
         raise Exception('Bad return code (' + response.getcode() + ') for: ' + url)
+    
+    if return_response:
+        return response
 
     return response.read()
