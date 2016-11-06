@@ -7,7 +7,7 @@ Created on Fri Oct 23 20:14:46 2015
 """
 from urllib import urlencode #somehow not in the urllib2 package
 import urllib2, cookielib, json, re
-from ActivityJSON import ActivityJSON
+from GarminActivity import GarminActivity
 
 class GarminHandler( object ):
     ## Global Constants
@@ -86,10 +86,9 @@ class GarminHandler( object ):
             raise Exception('Please login first with .login(<username>,<password>)')
 
         # Prevent downloading too large chunks (saves time)
+        max_chunk_size = self.JSON_DOWNLOAD_LIMIT
         if limit and limit < self.JSON_DOWNLOAD_LIMIT:
             max_chunk_size = limit
-        else:
-            max_chunk_size = self.JSON_DOWNLOAD_LIMIT
 
         # Determine index to start at
         if reversed:
@@ -125,7 +124,7 @@ class GarminHandler( object ):
             downloaded_chunk_size = len(activities)
 
             if reversed:
-                activities = activities[::-1] #reverse
+                activities = activities[::-1]
 
             for activity in activities:
                 activity_details = activity['activity']
@@ -150,11 +149,11 @@ class GarminHandler( object ):
         """ Iterate until an existing activity is found.
             *existing_ids* - list of integer activity ids
             *act_category* - ['running','cycling','swimming','hiking',...]
-            Returns a generator of ActivityJSON objects with new activities. """
+            Returns a generator of GarminActivity objects with new activities. """
         
         activities = self.activitiesGenerator()
         for activity_dict in activities:
-            activity = ActivityJSON( activity_dict )
+            activity = GarminActivity( activity_dict )
             
             act_id = activity.getID()
             if act_id in existing_ids:
@@ -166,7 +165,8 @@ class GarminHandler( object ):
     def getNewRuns( self, existing_ids ):
         """ Iterate until an existing activity is found.
             Returns list of new activities. """
-        self.getNewActivities(existing_ids, 'running')
+        for activity in self.getNewActivities(existing_ids, 'running'):
+            yield activity
         
     def getFileDataByID( self, activity_id, fileformat = 'tcx' ):
         """ Downloads and returns data of given activity """
